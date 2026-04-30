@@ -150,6 +150,11 @@
     .empty{text-align:center;padding:36px 0;color:var(--tx3);font-size:13px}
     .ldg{text-align:center;padding:28px;color:var(--tx3);font-size:13px}
 
+    /* PAY TYPE TOGGLE */
+    .pay-type-btn{flex:1;padding:9px;border-radius:var(--rsm);border:1px solid var(--bdr2);background:transparent;color:var(--tx3);font-family:'IBM Plex Sans Thai',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s}
+    .pay-type-btn.on.deposit{background:linear-gradient(135deg,var(--acc1),var(--acc2));color:#fff;border-color:transparent;box-shadow:0 3px 10px rgba(45,168,98,.3)}
+    .pay-type-btn.on.deduct{background:linear-gradient(135deg,#d94f4f,#e87070);color:#fff;border-color:transparent;box-shadow:0 3px 10px rgba(217,79,79,.3)}
+    .txn-am.neg{color:#e87070}
     /* scrollbar */
     ::-webkit-scrollbar{width:4px}
     ::-webkit-scrollbar-track{background:transparent}
@@ -286,7 +291,12 @@
       <!-- PAY -->
       <div class="tpnl on" id="tPay">
         <div class="card">
-          <div class="clbl">โอนเงินเข้าบัญชี</div>
+          <div class="clbl" id="pyClbl">โอนเงินเข้าบัญชี</div>
+          <!-- โอน / หัก toggle -->
+          <div style="display:flex;gap:6px;margin-bottom:14px">
+            <button class="pay-type-btn on deposit" id="btnDeposit" onclick="setPayType('deposit')">➕ โอนเงิน</button>
+            <button class="pay-type-btn deduct" id="btnDeduct" onclick="setPayType('deduct')">➖ หักเงิน</button>
+          </div>
           <div id="pyFlash"></div>
           <div class="fld">
             <label>ห้องเรียน</label>
@@ -322,7 +332,7 @@
             <label>หมายเหตุ</label>
             <input type="text" id="pyNote" placeholder="เช่น ส่งงาน, ตอบคำถามดี...">
           </div>
-          <button class="btn btn-p" onclick="doTransfer()">ยืนยันโอนเงิน →</button>
+          <button class="btn btn-p" id="pySubmitBtn" onclick="doTransfer()">ยืนยันโอนเงิน →</button>
         </div>
       </div>
 
@@ -378,12 +388,15 @@ const SHEET_URL="https://script.google.com/macros/s/AKfycbx6yjOcLgkJGHQxNFKjnDLF
         window.addEventListener("DOMContentLoaded",()=>{
           window.__restoredSession=data;
           me=data;renderDash();
+          if(tAuth)setMode("t");
         },{once:true});
       }
     }
   }catch(e){}
 })();
 const TEACHER_PIN="422304Joon";
+// ─── TEACHER SESSION ───
+let tAuth=sessionStorage.getItem("tAuth")==="1";
 const RL={m2_2:"ม.2/2",m2_4:"ม.2/4",m2_6:"ม.2/6",m2_8:"ม.2/8",m2_10:"ม.2/10",m2_12:"ม.2/12"};
 
 const fmtM=n=>Number(n).toLocaleString("th-TH");
@@ -402,7 +415,6 @@ function flash(id,msg,ok){
 }
 
 /* MODE */
-let tAuth=false;
 function setMode(m){
   document.getElementById("pnlS").classList.toggle("on",m==="s");
   document.getElementById("pnlT").classList.toggle("on",m==="t");
@@ -418,7 +430,7 @@ function reqTeacher(){
 }
 function chkPin(){
   if(document.getElementById("pinIn").value===TEACHER_PIN){
-    tAuth=true;document.getElementById("pinOvl").style.display="none";setMode("t");
+    tAuth=true;sessionStorage.setItem("tAuth","1");document.getElementById("pinOvl").style.display="none";setMode("t");
   }else{
     document.getElementById("pinErr").style.display="block";
     document.getElementById("pinIn").value="";
@@ -450,17 +462,37 @@ async function doLogin(){
     renderDash();
   }catch(e){err.textContent="เชื่อมต่อไม่ได้ กรุณาลองใหม่";err.style.display="block";}
 }
-function renderDash(){
-  document.getElementById("sLogin").style.display="none";
-  document.getElementById("sDash").style.display="block";
-  const bal=me.balance||0,pct=Math.min((bal/1e6)*100,100);
+function updateBalUI(bal){
+  const pct=Math.min((bal/1e6)*100,100);
   document.getElementById("dBal").textContent=fmtM(bal);
   document.getElementById("dBar").style.width=pct+"%";
   document.getElementById("dPct").textContent=pct.toFixed(1)+"%";
+}
+function renderDash(){
+  document.getElementById("sLogin").style.display="none";
+  document.getElementById("sDash").style.display="block";
+  updateBalUI(me.balance||0);
   document.getElementById("dName").textContent=me.name+(me.lastName?" "+me.lastName:"");
   document.getElementById("dRoom").textContent=RL[me.room]+" · เลขประจำตัว "+me.studentId;
   document.getElementById("dAccno").textContent=genAcc(me.studentId,me.room);
   loadTxns();
+  // auto-refresh ทุก 30 วินาที
+  if(window.__refreshTimer)clearInterval(window.__refreshTimer);
+  window.__refreshTimer=setInterval(()=>{
+    if(!me)return clearInterval(window.__refreshTimer);
+    api("getStudent",{room:me.room,studentId:me.studentId,name:me.name}).then(res=>{
+      if(res&&!res.error){me.balance=res.balance||0;updateBalUI(me.balance);}
+    }).catch(()=>{});
+  },30000);
+  // ดึงยอดล่าสุดจาก server เสมอ
+  api("getStudent",{room:me.room,studentId:me.studentId,name:me.name}).then(res=>{
+    if(res&&!res.error){
+      me.balance=res.balance||0;
+      me.lastName=res.lastName||me.lastName||"";
+      sessionStorage.setItem("me",JSON.stringify(me));
+      updateBalUI(me.balance);
+    }
+  }).catch(()=>{});
 }
 async function loadTxns(){
   const el=document.getElementById("dTxns");
@@ -472,18 +504,31 @@ async function loadTxns(){
       <div class="txn-row">
         <div class="txn-ico">💳</div>
         <div class="txn-bd"><div class="txn-nt">${t.note}</div><div class="txn-dt">${fmtD(t.date)}</div></div>
-        <div class="txn-rt"><div class="txn-am">+฿${fmtM(t.amount)}</div></div>
+        <div class="txn-rt"><div class="txn-am${t.amount<0?' neg':''}">${t.amount<0?'−':'+'}${fmtM(Math.abs(t.amount))}</div></div>
       </div>`).join("");
   }catch(e){el.innerHTML='<div class="empty">โหลดไม่ได้ กรุณาลองใหม่</div>';}
 }
 function doLogout(){
   me=null;
+  if(window.__refreshTimer)clearInterval(window.__refreshTimer);
   sessionStorage.removeItem("me");
   document.getElementById("sLogin").style.display="block";
   document.getElementById("sDash").style.display="none";
   ["lRoom","lId","lName"].forEach(id=>document.getElementById(id).value="");
 }
 
+/* PAY TYPE */
+let payType="deposit";
+function setPayType(t){
+  payType=t;
+  const isD=t==="deduct";
+  document.getElementById("btnDeposit").classList.toggle("on",!isD);
+  document.getElementById("btnDeduct").classList.toggle("on",isD);
+  document.getElementById("pyClbl").textContent=isD?"หักเงินออกจากบัญชี":"โอนเงินเข้าบัญชี";
+  document.getElementById("pySubmitBtn").textContent=isD?"ยืนยันหักเงิน −":"ยืนยันโอนเงิน →";
+  document.getElementById("pySubmitBtn").style.background=isD?"linear-gradient(135deg,#d94f4f,#e87070)":"";
+  document.getElementById("pySubmitBtn").style.boxShadow=isD?"0 4px 14px rgba(217,79,79,.3)":"";
+}
 /* TEACHER — PAY */
 let cache={};
 async function loadRoom(){
@@ -520,16 +565,16 @@ async function doTransfer(){
   const room=document.getElementById("pyRoom").value;
   const sid=document.getElementById("pyStu").value;
   const amt=parseInt(document.getElementById("pyAmt").value);
-  const note=document.getElementById("pyNote").value.trim()||"ครูโอนเงิน";
+  const note=document.getElementById("pyNote").value.trim()||(payType==="deduct"?"ครูหักเงิน":"ครูโอนเงิน");
   if(!room)return flash("pyFlash","กรุณาเลือกห้องเรียน",false);
   if(!sid)return flash("pyFlash","กรุณาเลือกนักเรียน",false);
   if(!amt||amt<=0)return flash("pyFlash","กรุณาระบุจำนวนเงิน",false);
   const s=(cache[room]||[]).find(x=>x.studentId===sid);
   if(s&&(s.balance||0)+amt>1e6)return flash("pyFlash","ยอดเกิน 1,000,000 บาท",false);
   try{
-    const res=await api("transfer",{room,studentId:sid,amount:amt,note});
+    const res=await api("transfer",{room,studentId:sid,amount:amt,note,type:payType});
     if(res.error)return flash("pyFlash",res.error,false);
-    flash("pyFlash",`โอน ฿${fmtM(amt)} ให้ ${s?.name}${s?.lastName?" "+s.lastName:""} สำเร็จ`,true);
+    flash("pyFlash",`${payType==="deduct"?"หัก":"โอน"} ฿${fmtM(amt)} ${payType==="deduct"?"จาก":"ให้"} ${s?.name}${s?.lastName?" "+s.lastName:""} สำเร็จ`,true);
     if(s)s.balance=(s.balance||0)+amt;
     showPrev();
     document.getElementById("pyAmt").value="";
@@ -569,7 +614,7 @@ async function loadHist(){
       <div class="txn-row">
         <div class="txn-ico">💳</div>
         <div class="txn-bd"><div class="txn-nt">${t.name}${t.lastName?" "+t.lastName:""} · ${t.note}</div><div class="txn-dt">${fmtD(t.date)}</div></div>
-        <div class="txn-rt"><div class="txn-am">+฿${fmtM(t.amount)}</div></div>
+        <div class="txn-rt"><div class="txn-am${t.amount<0?' neg':''}">${t.amount<0?'−':'+'}${fmtM(Math.abs(t.amount))}</div></div>
       </div>`).join("");
   }catch(e){el.innerHTML='<div class="empty">โหลดไม่ได้ กรุณาลองใหม่</div>';}
 }
